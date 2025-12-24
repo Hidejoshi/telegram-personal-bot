@@ -1,6 +1,6 @@
 import os
 import sqlite3
-from datetime import datetime, date, timedelta
+from datetime import datetime, timedelta
 import pytz
 import re
 from collections import Counter
@@ -11,7 +11,7 @@ TZ = pytz.timezone("Europe/Warsaw")
 DB_PATH = "database.db"
 TOKEN = os.environ.get("BOT_TOKEN")
 
-# ================= DATABASE =================
+# ---------- DATABASE ----------
 
 def get_conn():
     return sqlite3.connect(DB_PATH)
@@ -38,8 +38,7 @@ def init_db():
     c.execute("""
     CREATE TABLE IF NOT EXISTS snacks (
         day TEXT,
-        item TEXT,
-        calories INTEGER
+        item TEXT
     )""")
 
     c.execute("""
@@ -77,7 +76,7 @@ def init_db():
     conn.commit()
     conn.close()
 
-# ================= UTILS =================
+# ---------- UTILS ----------
 
 def today():
     return datetime.now(TZ).strftime("%Y-%m-%d")
@@ -88,43 +87,39 @@ def now_time():
 def norm(t):
     return t.lower().strip()
 
-# ================= HANDLER =================
+# ---------- HANDLER ----------
 
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or not update.message.text:
-        return
-
-    raw = update.message.text
-    lines = [norm(l) for l in raw.split("\n")]
-    text = lines[0]
+    text = norm(update.message.text)
+    lines = [norm(l) for l in update.message.text.split("\n")]
     day = today()
 
     conn = get_conn()
     c = conn.cursor()
 
-    # ---------- WATER ----------
+    # ----- WATER -----
     if text == "вода":
         c.execute("SELECT glasses FROM water WHERE day=?", (day,))
         row = c.fetchone()
         if row:
+            c.execute("UPDATE water SET glasses=glasses+1 WHERE day=?", (day,))
             total = row[0] + 1
-            c.execute("UPDATE water SET glasses=? WHERE day=?", (total, day))
         else:
+            c.execute("INSERT INTO water VALUES (?,1)", (day,))
             total = 1
-            c.execute("INSERT INTO water VALUES (?,?)", (day, 1))
         conn.commit()
-        await update.message.reply_text(f"Вода +1\nРазом сьогодні: {total}")
+        await update.message.reply_text(f"Додано\nВода: +1\nРазом: {total}")
         return
 
-    # ---------- FOOD ----------
-    if text.startswith("їжа"):
-        meal_type = text.replace("їжа", "").strip()
+    # ----- FOOD -----
+    if lines[0].startswith("їжа"):
+        meal_type = lines[0].replace("їжа", "").strip()
         if meal_type not in ["сніданок", "обід", "вечеря", "перекус"]:
             await update.message.reply_text("Невідомий тип їжі")
             return
 
         if len(lines) < 2:
-            await update.message.reply_text("Немає списку продуктів")
+            await update.message.reply_text("Немає продуктів")
             return
 
         products = [p.strip() for p in lines[1].split(",")]
@@ -132,17 +127,15 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         for p in products:
             c.execute("SELECT calories FROM food_dict WHERE name=?", (p,))
-            row = c.fetchone()
-            if not row:
-                await update.message.reply_text(f"Продукт «{p}» не знайдено")
+            r = c.fetchone()
+            if not r:
+                await update.message.reply_text(f"Немає продукту: {p}")
                 return
-            calories += row[0]
+            calories += r[0]
 
         if meal_type == "перекус":
             for p in products:
-                c.execute("SELECT calories FROM food_dict WHERE name=?", (p,))
-                cal = c.fetchone()[0]
-                c.execute("INSERT INTO snacks VALUES (?,?,?)", (day, p, cal))
+                c.execute("INSERT INTO snacks VALUES (?,?)", (day, p))
         else:
             c.execute(
                 "INSERT INTO meals VALUES (?,?,?,?,?)",
@@ -151,78 +144,85 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         conn.commit()
         await update.message.reply_text(
-            f"Додано: {meal_type}\nКкал: {calories}"
+            f"Додано\nЇжа: {meal_type}\n{', '.join(products)}\nКкал: {calories}\nЧас: {now_time()}"
         )
         return
 
-    # ---------- EXPENSE ----------
+    # ----- EXPENSES -----
     if text == "витрати" and len(lines) > 1:
-        try:
-            amt = float(lines[1].replace(",", "."))
-        except:
-            await update.message.reply_text("Невірна сума")
-            return
+        amt = float(lines[1].replace(",", "."))
         c.execute("INSERT INTO expenses VALUES (?,?)", (day, amt))
         conn.commit()
-        await update.message.reply_text(f"Витрати: {amt:.2f} zł")
+        await update.message.reply_text(f"Додано\nВитрати: {amt:.2f} zł")
         return
 
-    # ---------- INCOME (supports minus) ----------
+    # ----- INCOME (correct minus handling) -----
     if text == "дохід" and len(lines) > 1:
-        m = re.search(r"(-?[\d.,]+)\s*(\w+)?", lines[1])
+        raw = lines[1].strip()
+
+        negative = raw.startswith("-")
+
+        m = re.search(r"([\d.,]+)", raw)
         if not m:
             await update.message.reply_text("Невірний формат доходу")
             return
 
         amt = float(m.group(1).replace(",", "."))
-        cur_raw = (m.group(2) or "").lower()
+        if negative:
+            amt = -amt
 
-        if "дол" in cur_raw or "$" in cur_raw or "usd" in cur_raw:
-            cur = "$"
-        else:
-            cur = "zł"
+        cur = "$" if "дол" in raw or "$" in raw or "usd" in raw else "zł"
 
         c.execute("INSERT INTO income VALUES (?,?,?)", (day, amt, cur))
         conn.commit()
-        await update.message.reply_text(f"Дохід: {amt:+.2f} {cur}")
+        await update.message.reply_text(f"Додано\nДохід: {amt:+.2f} {cur}")
         return
 
-    # ---------- SUMMARY WATER ----------
+    # ----- SUMMARY WATER -----
     if text == "підсумок вода":
         c.execute("SELECT glasses FROM water WHERE day=?", (day,))
         g = c.fetchone()
-        await update.message.reply_text(f"Вода: {g[0] if g else 0}")
+        await update.message.reply_text(f"вода – {g[0] if g else 0}")
         return
 
-    # ---------- SUMMARY FOOD ----------
+    # ----- SUMMARY FOOD -----
     if text == "підсумок їжа":
         out = []
         total = 0
 
         c.execute("SELECT type,time,items,calories FROM meals WHERE day=?", (day,))
-        for t, tm, it, cal in c.fetchall():
-            out.append(f"{t} ({tm})\n{it}\n{cal} ккал\n")
-            total += cal
+        for m in c.fetchall():
+            out.append(f"{m[0].capitalize()} ({m[1]})\n{m[2]}\n{m[3]} ккал\n")
+            total += m[3]
 
-        c.execute("SELECT item,calories FROM snacks WHERE day=?", (day,))
-        snacks = c.fetchall()
+        c.execute("SELECT item FROM snacks WHERE day=?", (day,))
+        snacks = [s[0] for s in c.fetchall()]
         if snacks:
-            cnt = Counter(i for i, _ in snacks)
-            snack_cal = sum(cal for _, cal in snacks)
-            total += snack_cal
-            out.append("Перекуси:\n" + ", ".join(f"{k} x{v}" for k, v in cnt.items()))
-            out.append(f"Ккал перекусів: {snack_cal}")
+            cnt = Counter(snacks)
+            snack_kcal = 0
+            snack_lines = []
+            for k, v in cnt.items():
+                c.execute("SELECT calories FROM food_dict WHERE name=?", (k,))
+                cal = c.fetchone()[0]
+                snack_kcal += cal * v
+                snack_lines.append(f"{k} x{v}")
+            total += snack_kcal
+            out.append("Перекус:\n" + ", ".join(snack_lines) + f"\n{snack_kcal} ккал\n")
 
-        out.append(f"\nРАЗОМ: {total} ккал")
+        out.append(f"ЗАГАЛОМ ЗА ДЕНЬ: {total} ккал")
         await update.message.reply_text("\n".join(out))
         return
 
-    # ---------- SUMMARY DAY ----------
+    # ----- SUMMARY DAY -----
     if text == "підсумок день":
+        c.execute("SELECT SUM(amount) FROM expenses WHERE day=?", (day,))
+        exp = c.fetchone()[0] or 0
+
+        c.execute("SELECT currency, SUM(amount) FROM income WHERE day=? GROUP BY currency", (day,))
+        inc = "\n".join(f"{r[0]} – {r[1]:.2f}" for r in c.fetchall()) or "—"
+
         c.execute("SELECT glasses FROM water WHERE day=?", (day,))
         w = c.fetchone()
-        water = w[0] if w else 0
 
-        c.execute("SELECT SUM(calories) FROM meals WHERE day=?", (day,))
-        food = c.fetchone()[0] or 0
-        c.execute("SELECT SUM(calories) FROM snacks WHERE d
+        await update.message.reply_text(
+            f"ПІДСУМОК ЗА ДЕНЬ\n\n"
