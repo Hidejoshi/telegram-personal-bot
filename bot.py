@@ -224,5 +224,11 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         c.execute("SELECT glasses FROM water WHERE day=?", (day,))
         w = c.fetchone()
 
-        await update.message.reply_text(
-            f"ПІДСУМОК ЗА ДЕНЬ\n\n"
+text = (
+    "ПІДСУМОК ЗА ДЕНЬ\n\n"
+    f"Вода – {water} мл\n"
+    f"Їжа – {food_cal} ккал\n\n"
+    f"Витрати – {expenses:.2f} zł\n\n"
+    f"Дохід – {income:.2f} $"
+)
+await update.message.reply_text(text)
