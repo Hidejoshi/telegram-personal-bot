@@ -160,31 +160,155 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ---- SUMMARY DAY ----
     if text == "підсумок день":
-        c.execute("SELECT SUM(glasses) FROM water WHERE day=?", (day,))
-        water = c.fetchone()[0] or 0
+        out = []
+        total_cal = 0
 
-        c.execute("SELECT SUM(calories) FROM meals WHERE day=?", (day,))
-        food1 = c.fetchone()[0] or 0
+        # їжа
+        c.execute("SELECT type, time, items, calories FROM meals WHERE day=?", (day,))
+        meals = c.fetchall()
+        for m in meals:
+            out.append(
+                f"{m[0].capitalize()} ({m[1]})\n"
+                f"{m[2]}\n"
+                f"{m[3]} ккал\n"
+            )
+            total_cal += m[3]
 
-        c.execute("SELECT SUM(calories) FROM snacks WHERE day=?", (day,))
-        food2 = c.fetchone()[0] or 0
+        # перекуси
+        c.execute("SELECT item, calories FROM snacks WHERE day=?", (day,))
+        snacks = c.fetchall()
+        if snacks:
+            out.append("Перекуси:")
+            for s in snacks:
+                out.append(f"- {s[0]} ({s[1]} ккал)")
+                total_cal += s[1]
 
+        # вода
+        c.execute("SELECT glasses FROM water WHERE day=?", (day,))
+        w = c.fetchone()
+        water = w[0] if w else 0
+
+        # витрати
         c.execute("SELECT SUM(amount) FROM expenses WHERE day=?", (day,))
         expenses = c.fetchone()[0] or 0
 
+        # дохід (з + і -)
         c.execute("SELECT SUM(amount) FROM income WHERE day=?", (day,))
         income = c.fetchone()[0] or 0
 
-        text_out = (
-            "ПІДСУМОК ЗА ДЕНЬ\n\n"
-            f"Вода – {water}\n"
-            f"Їжа – {food1 + food2} ккал\n\n"
+        out.append(f"\nЗАГАЛОМ ЗА ДЕНЬ: {total_cal} ккал")
+        out.append(f"Вода: {water}")
+        out.append(f"Витрати: {expenses:.2f} zł")
+        out.append(f"Дохід: {income:.2f}")
+
+        await update.message.reply_text("\n".join(out))
+        return
+
+            # -------- SUMMARY WEEK --------
+    if text == "підсумок тиждень":
+        today_dt = datetime.now(TZ).date()
+        start = today_dt - timedelta(days=today_dt.weekday())
+        end = today_dt
+
+        c.execute(
+            "SELECT SUM(amount) FROM expenses WHERE day BETWEEN ? AND ?",
+            (start.isoformat(), end.isoformat())
+        )
+        expenses = c.fetchone()[0] or 0
+
+        c.execute(
+            "SELECT SUM(amount) FROM income WHERE day BETWEEN ? AND ?",
+            (start.isoformat(), end.isoformat())
+        )
+        income = c.fetchone()[0] or 0
+
+        await update.message.reply_text(
+            f"ПІДСУМОК ЗА ТИЖДЕНЬ\n"
+            f"{start} → {end}\n\n"
             f"Витрати – {expenses:.2f} zł\n"
             f"Дохід – {income:.2f}"
         )
-
-        await update.message.reply_text(text_out)
         return
+
+    # -------- SUMMARY MONTH --------
+    if text == "підсумок місяць":
+        today_dt = datetime.now(TZ).date()
+        start = today_dt.replace(day=1)
+        end = today_dt
+
+        c.execute(
+            "SELECT SUM(amount) FROM expenses WHERE day BETWEEN ? AND ?",
+            (start.isoformat(), end.isoformat())
+        )
+        expenses = c.fetchone()[0] or 0
+
+        c.execute(
+            "SELECT SUM(amount) FROM income WHERE day BETWEEN ? AND ?",
+            (start.isoformat(), end.isoformat())
+        )
+        income = c.fetchone()[0] or 0
+
+        await update.message.reply_text(
+            f"ПІДСУМОК ЗА МІСЯЦЬ\n"
+            f"{start} → {end}\n\n"
+            f"Витрати – {expenses:.2f} zł\n"
+            f"Дохід – {income:.2f}"
+        )
+        return
+
+ # -------- SUMMARY WATER (TODAY) --------
+    if text == "підсумок вода":
+        c.execute("SELECT glasses FROM water WHERE day=?", (day,))
+        row = c.fetchone()
+        total = row[0] if row else 0
+
+        await update.message.reply_text(f"вода – {total}")
+        return
+
+# -------- SUMMARY FOOD (TODAY) --------
+    if text == "підсумок їжа":
+        out = []
+        total_cal = 0
+
+        c.execute(
+            "SELECT type, time, items, calories FROM meals WHERE day=?",
+            (day,)
+        )
+        meals = c.fetchall()
+
+        for m in meals:
+            out.append(
+                f"{m[0].capitalize()} ({m[1]})\n"
+                f"{m[2]}\n"
+                f"{m[3]} ккал\n"
+            )
+            total_cal += m[3]
+
+        c.execute("SELECT item FROM snacks WHERE day=?", (day,))
+        snacks = [r[0] for r in c.fetchall()]
+
+        if snacks:
+            cnt = Counter(snacks)
+            snack_cal = 0
+
+            for k, v in cnt.items():
+                c.execute("SELECT calories FROM food_dict WHERE name=?", (k,))
+                cal = c.fetchone()[0]
+                snack_cal += cal * v
+
+            out.append(
+                "Перекус:\n" +
+                ", ".join(f"{k} x{v}" for k, v in cnt.items()) +
+                f"\n{snack_cal} ккал"
+            )
+
+            total_cal += snack_cal
+
+        out.append(f"\nЗАГАЛОМ ЗА ДЕНЬ: {total_cal} ккал")
+
+        await update.message.reply_text("\n".join(out))
+        return
+
 
 # ---------- MAIN ----------
 
