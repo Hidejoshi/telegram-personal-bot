@@ -10,15 +10,12 @@ from collections import Counter
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, filters
 
-# ---------------- CONFIG ----------------
-
 TOKEN = os.environ.get("BOT_TOKEN")
 DB_PATH = "database.db"
 TZ = pytz.timezone("Europe/Warsaw")
-
 PORT = int(os.environ.get("PORT", 10000))
 
-# ---------------- DUMMY WEB SERVER (RENDER NEEDS PORT) ----------------
+# ---------------- HTTP для Render ----------------
 
 class DummyHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -26,11 +23,10 @@ class DummyHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b"OK")
 
-def run_http_server():
-    server = HTTPServer(("0.0.0.0", PORT), DummyHandler)
-    server.serve_forever()
+def run_http():
+    HTTPServer(("0.0.0.0", PORT), DummyHandler).serve_forever()
 
-# ---------------- DATABASE ----------------
+# ---------------- DB ----------------
 
 def get_conn():
     return sqlite3.connect(DB_PATH)
@@ -39,54 +35,20 @@ def init_db():
     conn = get_conn()
     c = conn.cursor()
 
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS food_dict (
-        name TEXT PRIMARY KEY,
-        calories INTEGER
-    )""")
-
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS meals (
-        day TEXT,
-        type TEXT,
-        time TEXT,
-        items TEXT,
-        calories INTEGER
-    )""")
-
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS snacks (
-        day TEXT,
-        item TEXT
-    )""")
-
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS water (
-        day TEXT PRIMARY KEY,
-        glasses INTEGER
-    )""")
-
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS expenses (
-        day TEXT,
-        amount REAL
-    )""")
-
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS income (
-        day TEXT,
-        amount REAL,
-        currency TEXT
-    )""")
+    c.execute("""CREATE TABLE IF NOT EXISTS food_dict (name TEXT PRIMARY KEY, calories INTEGER)""")
+    c.execute("""CREATE TABLE IF NOT EXISTS meals (day TEXT, type TEXT, time TEXT, items TEXT, calories INTEGER)""")
+    c.execute("""CREATE TABLE IF NOT EXISTS snacks (day TEXT, item TEXT)""")
+    c.execute("""CREATE TABLE IF NOT EXISTS water (day TEXT PRIMARY KEY, glasses INTEGER)""")
+    c.execute("""CREATE TABLE IF NOT EXISTS expenses (day TEXT, amount REAL)""")
+    c.execute("""CREATE TABLE IF NOT EXISTS income (day TEXT, amount REAL, currency TEXT)""")
 
     foods = {
-        "картопля":257,"рис":288,"яйця":156,"макарони":288,"фарш":384,
-        "курка":323,"помідор":23,"мікс салат":123,"кабачок":12,
-        "морква":20,"огірок":8,"броколі":17,"кукурудза":96,
-        "квашені огірки":12,"хлібці + паста + фрукт":155,"яблуко":78,
-        "банан":108,"апельсин":62,"мандарин":53,"шоколадка":130,
-        "печиво":150,"кола":105,"хліб":80,"кава чорна":2,
-        "чай чорний/зелений":2,"горіхи":150,"сушка":100,"авокадо":200
+        "картопля":257,"рис":288,"яйця":156,"макарони":288,"фарш":384,"курка":323,
+        "помідор":23,"мікс салат":123,"кабачок":12,"морква":20,"огірок":8,
+        "броколі":17,"кукурудза":96,"квашені огірки":12,"хлібці + паста + фрукт":155,
+        "яблуко":78,"банан":108,"апельсин":62,"мандарин":53,"шоколадка":130,
+        "печиво":150,"кола":105,"хліб":80,"кава чорна":2,"чай чорний/зелений":2,
+        "горіхи":150,"сушка":100,"авокадо":200
     }
 
     for k, v in foods.items():
@@ -100,46 +62,37 @@ def init_db():
 def today():
     return datetime.now(TZ).strftime("%Y-%m-%d")
 
-def now_time():
+def now():
     return datetime.now(TZ).strftime("%H:%M")
 
-def norm(t: str):
+def norm(t):
     return t.lower().strip()
 
-# ---------------- MAIN HANDLER ----------------
+# ---------------- HANDLER ----------------
 
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text_raw = update.message.text
-    text = norm(text_raw)
-    lines = [norm(l) for l in text_raw.split("\n")]
+    raw = update.message.text
+    lines = [norm(l) for l in raw.split("\n")]
     day = today()
 
     conn = get_conn()
     c = conn.cursor()
 
-    # ----- WATER -----
-    if text == "вода":
+    # ---- ВОДА ----
+    if lines[0] == "вода":
         c.execute("SELECT glasses FROM water WHERE day=?", (day,))
-        row = c.fetchone()
-        if row:
-            total = row[0] + 1
-            c.execute("UPDATE water SET glasses=? WHERE day=?", (total, day))
-        else:
-            total = 1
-            c.execute("INSERT INTO water VALUES (?,?)", (day, total))
+        r = c.fetchone()
+        total = (r[0] + 1) if r else 1
+        c.execute("REPLACE INTO water VALUES (?,?)", (day, total))
         conn.commit()
         await update.message.reply_text(f"Додано\nВода: +1\nРазом: {total}")
         return
 
-    # ----- FOOD -----
+    # ---- ЇЖА ----
     if lines[0].startswith("їжа"):
-        meal_type = lines[0].replace("їжа", "").strip()
-        if meal_type not in ["сніданок", "обід", "вечеря", "перекус"]:
-            await update.message.reply_text("Помилка: тип їжі")
-            return
-
-        if len(lines) < 2:
-            await update.message.reply_text("Помилка: немає продуктів")
+        meal = lines[0].replace("їжа", "").strip()
+        if meal not in ["сніданок", "обід", "вечеря", "перекус"]:
+            await update.message.reply_text("Помилка типу їжі")
             return
 
         products = [p.strip() for p in lines[1].split(",")]
@@ -153,90 +106,75 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
             calories += r[0]
 
-        if meal_type == "перекус":
+        if meal == "перекус":
             for p in products:
                 c.execute("INSERT INTO snacks VALUES (?,?)", (day, p))
         else:
-            c.execute(
-                "INSERT INTO meals VALUES (?,?,?,?,?)",
-                (day, meal_type, now_time(), ", ".join(products), calories)
-            )
+            c.execute("INSERT INTO meals VALUES (?,?,?,?,?)",
+                      (day, meal, now(), ", ".join(products), calories))
 
         conn.commit()
         await update.message.reply_text(
-            f"Додано\nЇжа: {meal_type}\nПродукти: {', '.join(products)}\nКкал: {calories}\nЧас: {now_time()}"
+            f"Додано\nЇжа: {meal}\nПродукти: {', '.join(products)}\nКкал: {calories}\nЧас: {now()}"
         )
         return
 
-    # ----- EXPENSE -----
-    if text == "витрати" and len(lines) > 1:
+    # ---- ВИТРАТИ ----
+    if lines[0] == "витрати":
         amt = float(lines[1].replace(",", "."))
         c.execute("INSERT INTO expenses VALUES (?,?)", (day, amt))
         conn.commit()
         await update.message.reply_text(f"Додано\nВитрати: {amt:.2f} zł")
         return
 
-    # ----- INCOME -----
-    if text == "дохід" and len(lines) > 1:
+    # ---- ДОХІД ----
+    if lines[0] == "дохід":
         m = re.search(r"([\d.,]+)\s*(\w+)", lines[1])
         amt = float(m.group(1).replace(",", "."))
-        cur_raw = m.group(2)
-        cur = "$" if "дол" in cur_raw else "zł"
+        cur = "$" if "дол" in m.group(2) else "zł"
         c.execute("INSERT INTO income VALUES (?,?,?)", (day, amt, cur))
         conn.commit()
         await update.message.reply_text(f"Додано\nДохід: {amt:.2f} {cur}")
         return
 
-    # ----- SUMMARY WATER -----
-    if text == "підсумок вода":
-        c.execute("SELECT glasses FROM water WHERE day=?", (day,))
-        r = c.fetchone()
-        await update.message.reply_text(f"вода – {r[0] if r else 0}")
-        return
+    # ---- ПІДСУМОК ДНЯ ----
+    if lines[0] == "підсумок день":
+        out = ["ПІДСУМОК ЗА ДЕНЬ\n\nЇжа:"]
 
-    # ----- SUMMARY FOOD -----
-    if text == "підсумок їжа":
-        out = []
-        total = 0
-
+        total_k = 0
         c.execute("SELECT type,time,items,calories FROM meals WHERE day=?", (day,))
         for m in c.fetchall():
             out.append(f"{m[0]} ({m[1]})\n{m[2]}\n{m[3]} ккал\n")
-            total += m[3]
+            total_k += m[3]
 
         c.execute("SELECT item FROM snacks WHERE day=?", (day,))
-        snacks = [s[0] for s in c.fetchall()]
-        if snacks:
-            cnt = Counter(snacks)
+        sn = [s[0] for s in c.fetchall()]
+        if sn:
+            cnt = Counter(sn)
             out.append("Перекус:\n" + ", ".join(f"{k} x{v}" for k, v in cnt.items()))
 
-        out.append(f"\nЗАГАЛОМ ЗА ДЕНЬ: {total} ккал")
-        await update.message.reply_text("\n".join(out))
-        return
+        out.append(f"\nЗАГАЛОМ ЗА ДЕНЬ: {total_k} ккал\n")
 
-    # ----- SUMMARY DAY -----
-    if text == "підсумок день":
-        c.execute("SELECT SUM(glasses) FROM water WHERE day=?", (day,))
-        w = c.fetchone()[0] or 0
+        c.execute("SELECT glasses FROM water WHERE day=?", (day,))
+        w = c.fetchone()
+        out.append(f"Вода – {w[0] if w else 0}\n")
 
         c.execute("SELECT SUM(amount) FROM expenses WHERE day=?", (day,))
-        exp = c.fetchone()[0] or 0
+        out.append(f"Витрати – {(c.fetchone()[0] or 0):.2f} zł\n")
 
         c.execute("SELECT currency, SUM(amount) FROM income WHERE day=? GROUP BY currency", (day,))
-        inc = "\n".join(f"{r[0]} – {r[1]:.2f}" for r in c.fetchall())
+        out.append("Дохід:")
+        for r in c.fetchall():
+            out.append(f"{r[0]} – {r[1]:.2f}")
 
-        await update.message.reply_text(
-            f"ПІДСУМОК ЗА ДЕНЬ\n\nВода – {w}\n\nВитрати – {exp:.2f} zł\n\nДохід:\n{inc}"
-        )
+        await update.message.reply_text("\n".join(out))
         return
 
 # ---------------- START ----------------
 
 if __name__ == "__main__":
     init_db()
-
-    threading.Thread(target=run_http_server, daemon=True).start()
-
+    threading.Thread(target=run_http, daemon=True).start()
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
     app.run_polling()
