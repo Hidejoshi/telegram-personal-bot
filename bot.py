@@ -113,7 +113,6 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ---- FOOD ----
     if lines[0].startswith("їжа"):
         meal_type = lines[0].replace("їжа", "").strip()
-
         products = [p.strip() for p in lines[1].split(",")]
         calories = 0
 
@@ -145,14 +144,14 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         amt = float(lines[1].replace(",", "."))
         c.execute("INSERT INTO expenses VALUES (?, ?)", (day, amt))
         conn.commit()
-        await update.message.reply_text(f"Витрати: {amt:.2f} zł")
+        await update.message.reply_text(f"Витрати: {amt:.2f} PLN")
         return
 
     # ---- INCOME (+ / -) ----
     if lines[0] == "дохід":
         m = re.search(r"(-?[\d.,]+)\s*(\w+)", lines[1])
         amt = float(m.group(1).replace(",", "."))
-        cur = "$" if "дол" in m.group(2) else "zł"
+        cur = "USD" if "дол" in m.group(2) else "PLN"
         c.execute("INSERT INTO income VALUES (?, ?, ?)", (day, amt, cur))
         conn.commit()
         await update.message.reply_text(f"Дохід: {amt:.2f} {cur}")
@@ -163,18 +162,12 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         out = []
         total_cal = 0
 
-        # їжа
         c.execute("SELECT type, time, items, calories FROM meals WHERE day=?", (day,))
         meals = c.fetchall()
         for m in meals:
-            out.append(
-                f"{m[0].capitalize()} ({m[1]})\n"
-                f"{m[2]}\n"
-                f"{m[3]} ккал\n"
-            )
+            out.append(f"{m[0].capitalize()} ({m[1]})\n{m[2]}\n{m[3]} ккал")
             total_cal += m[3]
 
-        # перекуси
         c.execute("SELECT item, calories FROM snacks WHERE day=?", (day,))
         snacks = c.fetchall()
         if snacks:
@@ -183,28 +176,28 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 out.append(f"- {s[0]} ({s[1]} ккал)")
                 total_cal += s[1]
 
-        # вода
         c.execute("SELECT glasses FROM water WHERE day=?", (day,))
         w = c.fetchone()
         water = w[0] if w else 0
 
-        # витрати
         c.execute("SELECT SUM(amount) FROM expenses WHERE day=?", (day,))
         expenses = c.fetchone()[0] or 0
 
-        # дохід (з + і -)
-        c.execute("SELECT SUM(amount) FROM income WHERE day=?", (day,))
-        income = c.fetchone()[0] or 0
+        c.execute(
+            "SELECT currency, SUM(amount) FROM income WHERE day=? GROUP BY currency",
+            (day,)
+        )
+        for cur, total in c.fetchall():
+            out.append(f"Дохід: {total:.2f} {cur}")
 
         out.append(f"\nЗАГАЛОМ ЗА ДЕНЬ: {total_cal} ккал")
         out.append(f"Вода: {water}")
-        out.append(f"Витрати: {expenses:.2f} zł")
-        out.append(f"Дохід: {income:.2f}")
+        out.append(f"Витрати: {expenses:.2f} PLN")
 
         await update.message.reply_text("\n".join(out))
         return
 
-            # -------- SUMMARY WEEK --------
+    # ---- SUMMARY WEEK ----
     if text == "підсумок тиждень":
         today_dt = datetime.now(TZ).date()
         start = today_dt - timedelta(days=today_dt.weekday())
@@ -217,103 +210,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         expenses = c.fetchone()[0] or 0
 
         c.execute(
-            "SELECT SUM(amount) FROM income WHERE day BETWEEN ? AND ?",
+            "SELECT currency, SUM(amount) FROM income WHERE day BETWEEN ? AND ? GROUP BY currency",
             (start.isoformat(), end.isoformat())
         )
-        income = c.fetchone()[0] or 0
-
-        await update.message.reply_text(
-            f"ПІДСУМОК ЗА ТИЖДЕНЬ\n"
-            f"{start} → {end}\n\n"
-            f"Витрати – {expenses:.2f} zł\n"
-            f"Дохід – {income:.2f}"
-        )
-        return
-
-    # -------- SUMMARY MONTH --------
-    if text == "підсумок місяць":
-        today_dt = datetime.now(TZ).date()
-        start = today_dt.replace(day=1)
-        end = today_dt
-
-        c.execute(
-            "SELECT SUM(amount) FROM expenses WHERE day BETWEEN ? AND ?",
-            (start.isoformat(), end.isoformat())
-        )
-        expenses = c.fetchone()[0] or 0
-
-        c.execute(
-            "SELECT SUM(amount) FROM income WHERE day BETWEEN ? AND ?",
-            (start.isoformat(), end.isoformat())
-        )
-        income = c.fetchone()[0] or 0
-
-        await update.message.reply_text(
-            f"ПІДСУМОК ЗА МІСЯЦЬ\n"
-            f"{start} → {end}\n\n"
-            f"Витрати – {expenses:.2f} zł\n"
-            f"Дохід – {income:.2f}"
-        )
-        return
-
- # -------- SUMMARY WATER (TODAY) --------
-    if text == "підсумок вода":
-        c.execute("SELECT glasses FROM water WHERE day=?", (day,))
-        row = c.fetchone()
-        total = row[0] if row else 0
-
-        await update.message.reply_text(f"вода – {total}")
-        return
-
-# -------- SUMMARY FOOD (TODAY) --------
-    if text == "підсумок їжа":
-        out = []
-        total_cal = 0
-
-        c.execute(
-            "SELECT type, time, items, calories FROM meals WHERE day=?",
-            (day,)
-        )
-        meals = c.fetchall()
-
-        for m in meals:
-            out.append(
-                f"{m[0].capitalize()} ({m[1]})\n"
-                f"{m[2]}\n"
-                f"{m[3]} ккал\n"
-            )
-            total_cal += m[3]
-
-        c.execute("SELECT item FROM snacks WHERE day=?", (day,))
-        snacks = [r[0] for r in c.fetchall()]
-
-        if snacks:
-            cnt = Counter(snacks)
-            snack_cal = 0
-
-            for k, v in cnt.items():
-                c.execute("SELECT calories FROM food_dict WHERE name=?", (k,))
-                cal = c.fetchone()[0]
-                snack_cal += cal * v
-
-            out.append(
-                "Перекус:\n" +
-                ", ".join(f"{k} x{v}" for k, v in cnt.items()) +
-                f"\n{snack_cal} ккал"
-            )
-
-            total_cal += snack_cal
-
-        out.append(f"\nЗАГАЛОМ ЗА ДЕНЬ: {total_cal} ккал")
-
-        await update.message.reply_text("\n".join(out))
-        return
-
-
-# ---------- MAIN ----------
-
-if __name__ == "__main__":
-    init_db()
-    app = ApplicationBuilder().token(TOKEN).build()
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+        income_lines = [f"Дохід – {t:.2f} {c}" for c, t in c.fe]()_
