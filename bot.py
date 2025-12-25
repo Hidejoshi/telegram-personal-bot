@@ -316,4 +316,4 @@ if __name__ == "__main__":
     init_db()
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
-    app.run_polling()
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
