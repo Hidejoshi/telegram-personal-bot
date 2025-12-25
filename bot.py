@@ -197,6 +197,45 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("\n".join(out))
         return
 
+    # -------- SUMMARY FOOD (TODAY) --------
+if text == "підсумок їжа":
+    out = []
+    total_cal = 0
+
+    # основні прийоми їжі
+    c.execute(
+        "SELECT type, time, items, calories FROM meals WHERE day=? ORDER BY time",
+        (day,)
+    )
+    meals = c.fetchall()
+
+    for m in meals:
+        out.append(
+            f"{m[0].capitalize()} ({m[1]})\n"
+            f"{m[2]}\n"
+            f"{m[3]} ккал"
+        )
+        total_cal += m[3]
+
+    # перекуси
+    c.execute(
+        "SELECT item, calories FROM snacks WHERE day=?",
+        (day,)
+    )
+    snacks = c.fetchall()
+
+    if snacks:
+        out.append("Перекус:")
+        for item, cal in snacks:
+            out.append(f"- {item} ({cal} ккал)")
+            total_cal += cal
+
+    # загальна сума
+    out.append(f"\nЗАГАЛОМ ЗА ДЕНЬ: {total_cal} ккал")
+
+    await update.message.reply_text("\n".join(out))
+    return
+
     # ---- SUMMARY WEEK ----
     if text == "підсумок тиждень":
         today_dt = datetime.now(TZ).date()
