@@ -159,43 +159,73 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ---- SUMMARY DAY ----
     if text == "підсумок день":
-        out = []
-        total_cal = 0
+    out = []
+    total_cal = 0
 
-        c.execute("SELECT type, time, items, calories FROM meals WHERE day=?", (day,))
-        meals = c.fetchall()
-        for m in meals:
-            out.append(f"{m[0].capitalize()} ({m[1]})\n{m[2]}\n{m[3]} ккал")
-            total_cal += m[3]
+    # -------- ЇЖА --------
+    c.execute(
+        "SELECT type, time, items, calories FROM meals WHERE day=? ORDER BY time",
+        (day,)
+    )
+    meals = c.fetchall()
 
-        c.execute("SELECT item, calories FROM snacks WHERE day=?", (day,))
-        snacks = c.fetchall()
-        if snacks:
-            out.append("Перекуси:")
-            for s in snacks:
-                out.append(f"- {s[0]} ({s[1]} ккал)")
-                total_cal += s[1]
+    for meal_type, tm, items, cal in meals:
+        out.append(f"{meal_type.capitalize()} ({tm})")
+        out.append(items)
+        out.append(f"{cal} ккал\n")
+        total_cal += cal
 
-        c.execute("SELECT glasses FROM water WHERE day=?", (day,))
-        w = c.fetchone()
-        water = w[0] if w else 0
+    # -------- ПЕРЕКУС --------
+    c.execute(
+        "SELECT item, calories FROM snacks WHERE day=?",
+        (day,)
+    )
+    snacks = c.fetchall()
 
-        c.execute("SELECT SUM(amount) FROM expenses WHERE day=?", (day,))
-        expenses = c.fetchone()[0] or 0
+    if snacks:
+        out.append("Перекус:")
+        for item, cal in snacks:
+            out.append(f"- {item} ({cal} ккал)")
+            total_cal += cal
 
-        c.execute(
-            "SELECT currency, SUM(amount) FROM income WHERE day=? GROUP BY currency",
-            (day,)
-        )
-        for cur, total in c.fetchall():
-            out.append(f"Дохід: {total:.2f} {cur}")
+    # -------- ВОДА --------
+    c.execute(
+        "SELECT SUM(amount) FROM water WHERE day=?",
+        (day,)
+    )
+    water = c.fetchone()[0] or 0
 
-        out.append(f"\nЗАГАЛОМ ЗА ДЕНЬ: {total_cal} ккал")
-        out.append(f"Вода: {water}")
-        out.append(f"Витрати: {expenses:.2f} PLN")
+    # -------- ВИТРАТИ --------
+    c.execute(
+        "SELECT SUM(amount) FROM expenses WHERE day=?",
+        (day,)
+    )
+    expenses = c.fetchone()[0] or 0
 
-        await update.message.reply_text("\n".join(out))
-        return
+    # -------- ДОХІД (ТІЛЬКИ +, ПО ВАЛЮТАХ) --------
+    c.execute(
+        """
+        SELECT currency, SUM(amount)
+        FROM income
+        WHERE day=? AND amount > 0
+        GROUP BY currency
+        """,
+        (day,)
+    )
+    income_rows = c.fetchall()
+
+    # -------- ФІНАЛ --------
+    out.append(f"\nЗАГАЛОМ ЗА ДЕНЬ: {total_cal} ккал")
+    out.append(f"Вода: {water} мл")
+    out.append(f"Витрати: {expenses:.2f} zł")
+
+    if income_rows:
+        out.append("Дохід:")
+        for cur, total in income_rows:
+            out.append(f"- {total:.2f} {cur}")
+
+    await update.message.reply_text("\n".join(out))
+    return
 
     # ---- SUMMARY FOOD (TODAY) ----
 if text == "підсумок їжа":
@@ -208,15 +238,16 @@ if text == "підсумок їжа":
     )
     meals = c.fetchall()
 
-    for m in meals:
-        out.append(
-            f"{m[0].capitalize()} ({m[1]})\n"
-            f"{m[2]}\n"
-            f"{m[3]} ккал"
-        )
-        total_cal += m[3]
+    for meal_type, tm, items, cal in meals:
+        out.append(f"{meal_type.capitalize()} ({tm})")
+        out.append(items)
+        out.append(f"{cal} ккал\n")
+        total_cal += cal
 
-    c.execute("SELECT item, calories FROM snacks WHERE day=?", (day,))
+    c.execute(
+        "SELECT item, calories FROM snacks WHERE day=?",
+        (day,)
+    )
     snacks = c.fetchall()
 
     if snacks:
@@ -225,25 +256,33 @@ if text == "підсумок їжа":
             out.append(f"- {item} ({cal} ккал)")
             total_cal += cal
 
-    out.append(f"\nЗАГАЛОМ ЗА ДЕНЬ: {total_cal} ккал")
+    out.append(f"\nЗАГАЛОМ: {total_cal} ккал")
 
     await update.message.reply_text("\n".join(out))
     return
 
    # ---- SUMMARY WEEK ----
 if text == "підсумок тиждень":
-    today_dt = datetime.now(TZ).date()
-    start = today_dt - timedelta(days=today_dt.weekday())
-    end = today_dt
+    today = datetime.now(TZ).date()
+    start = today - timedelta(days=today.weekday())
+    end = today
 
+    # витрати
     c.execute(
         "SELECT SUM(amount) FROM expenses WHERE day BETWEEN ? AND ?",
         (start.isoformat(), end.isoformat())
     )
     expenses = c.fetchone()[0] or 0
 
+    # дохід (ТІЛЬКИ плюсовий)
     c.execute(
-        "SELECT currency, SUM(amount) FROM income WHERE day BETWEEN ? AND ? GROUP BY currency",
+        """
+        SELECT currency, SUM(amount)
+        FROM income
+        WHERE day BETWEEN ? AND ?
+          AND amount > 0
+        GROUP BY currency
+        """,
         (start.isoformat(), end.isoformat())
     )
     rows = c.fetchall()
@@ -252,16 +291,16 @@ if text == "підсумок тиждень":
 
     await update.message.reply_text(
         f"ПІДСУМОК ЗА ТИЖДЕНЬ\n{start} → {end}\n\n"
-        f"Витрати – {expenses:.2f} PLN\n" +
+        f"Витрати – {expenses:.2f} zł\n" +
         "\n".join(income_lines)
     )
     return
 
 # ---- SUMMARY MONTH ----
 if text == "підсумок місяць":
-    today_dt = datetime.now(TZ).date()
-    start = today_dt.replace(day=1)
-    end = today_dt
+    today = datetime.now(TZ).date()
+    start = today.replace(day=1)
+    end = today
 
     c.execute(
         "SELECT SUM(amount) FROM expenses WHERE day BETWEEN ? AND ?",
@@ -270,7 +309,13 @@ if text == "підсумок місяць":
     expenses = c.fetchone()[0] or 0
 
     c.execute(
-        "SELECT currency, SUM(amount) FROM income WHERE day BETWEEN ? AND ? GROUP BY currency",
+        """
+        SELECT currency, SUM(amount)
+        FROM income
+        WHERE day BETWEEN ? AND ?
+          AND amount > 0
+        GROUP BY currency
+        """,
         (start.isoformat(), end.isoformat())
     )
     rows = c.fetchall()
@@ -279,7 +324,7 @@ if text == "підсумок місяць":
 
     await update.message.reply_text(
         f"ПІДСУМОК ЗА МІСЯЦЬ\n{start} → {end}\n\n"
-        f"Витрати – {expenses:.2f} PLN\n" +
+        f"Витрати – {expenses:.2f} zł\n" +
         "\n".join(income_lines)
     )
     return
