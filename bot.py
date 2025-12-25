@@ -197,12 +197,11 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("\n".join(out))
         return
 
-    # -------- SUMMARY FOOD (TODAY) --------
+    # ---- SUMMARY FOOD (TODAY) ----
 if text == "підсумок їжа":
     out = []
     total_cal = 0
 
-    # основні прийоми їжі
     c.execute(
         "SELECT type, time, items, calories FROM meals WHERE day=? ORDER BY time",
         (day,)
@@ -217,11 +216,7 @@ if text == "підсумок їжа":
         )
         total_cal += m[3]
 
-    # перекуси
-    c.execute(
-        "SELECT item, calories FROM snacks WHERE day=?",
-        (day,)
-    )
+    c.execute("SELECT item, calories FROM snacks WHERE day=?", (day,))
     snacks = c.fetchall()
 
     if snacks:
@@ -230,26 +225,61 @@ if text == "підсумок їжа":
             out.append(f"- {item} ({cal} ккал)")
             total_cal += cal
 
-    # загальна сума
     out.append(f"\nЗАГАЛОМ ЗА ДЕНЬ: {total_cal} ккал")
 
     await update.message.reply_text("\n".join(out))
     return
 
-    # ---- SUMMARY WEEK ----
-    if text == "підсумок тиждень":
-        today_dt = datetime.now(TZ).date()
-        start = today_dt - timedelta(days=today_dt.weekday())
-        end = today_dt
+   # ---- SUMMARY WEEK ----
+if text == "підсумок тиждень":
+    today_dt = datetime.now(TZ).date()
+    start = today_dt - timedelta(days=today_dt.weekday())
+    end = today_dt
 
-        c.execute(
-            "SELECT SUM(amount) FROM expenses WHERE day BETWEEN ? AND ?",
-            (start.isoformat(), end.isoformat())
-        )
-        expenses = c.fetchone()[0] or 0
+    c.execute(
+        "SELECT SUM(amount) FROM expenses WHERE day BETWEEN ? AND ?",
+        (start.isoformat(), end.isoformat())
+    )
+    expenses = c.fetchone()[0] or 0
 
-        c.execute(
-            "SELECT currency, SUM(amount) FROM income WHERE day BETWEEN ? AND ? GROUP BY currency",
-            (start.isoformat(), end.isoformat())
-        )
-        income_lines = [f"Дохід – {t:.2f} {c}" for c, t in c.fe]()_
+    c.execute(
+        "SELECT currency, SUM(amount) FROM income WHERE day BETWEEN ? AND ? GROUP BY currency",
+        (start.isoformat(), end.isoformat())
+    )
+    rows = c.fetchall()
+
+    income_lines = [f"Дохід – {total:.2f} {cur}" for cur, total in rows]
+
+    await update.message.reply_text(
+        f"ПІДСУМОК ЗА ТИЖДЕНЬ\n{start} → {end}\n\n"
+        f"Витрати – {expenses:.2f} PLN\n" +
+        "\n".join(income_lines)
+    )
+    return
+
+# ---- SUMMARY MONTH ----
+if text == "підсумок місяць":
+    today_dt = datetime.now(TZ).date()
+    start = today_dt.replace(day=1)
+    end = today_dt
+
+    c.execute(
+        "SELECT SUM(amount) FROM expenses WHERE day BETWEEN ? AND ?",
+        (start.isoformat(), end.isoformat())
+    )
+    expenses = c.fetchone()[0] or 0
+
+    c.execute(
+        "SELECT currency, SUM(amount) FROM income WHERE day BETWEEN ? AND ? GROUP BY currency",
+        (start.isoformat(), end.isoformat())
+    )
+    rows = c.fetchall()
+
+    income_lines = [f"Дохід – {total:.2f} {cur}" for cur, total in rows]
+
+    await update.message.reply_text(
+        f"ПІДСУМОК ЗА МІСЯЦЬ\n{start} → {end}\n\n"
+        f"Витрати – {expenses:.2f} PLN\n" +
+        "\n".join(income_lines)
+    )
+    return
