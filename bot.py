@@ -375,30 +375,30 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ===== СТАТУС =====
     if text == "статус":
-    # калорії
-    total_cal = 0
-    c.execute("SELECT calories FROM meals WHERE day=?", (day,))
-    total_cal += sum(r[0] for r in c.fetchall())
+        # калорії
+        total_cal = 0
+        c.execute("SELECT calories FROM meals WHERE day=?", (day,))
+        total_cal += sum(r[0] for r in c.fetchall())
 
-    c.execute("SELECT calories FROM snacks WHERE day=?", (day,))
-    total_cal += sum(r[0] for r in c.fetchall())
+        c.execute("SELECT calories FROM snacks WHERE day=?", (day,))
+        total_cal += sum(r[0] for r in c.fetchall())
 
-    # вода
-    c.execute("SELECT glasses FROM water WHERE day=?", (day,))
-    w = c.fetchone()
-    glasses = w[0] if w else 0
+        # вода
+        c.execute("SELECT glasses FROM water WHERE day=?", (day,))
+        w = c.fetchone()
+        glasses = w[0] if w else 0
 
-    # витрати
-    c.execute("SELECT SUM(amount) FROM expenses WHERE day=?", (day,))
-    expenses = c.fetchone()[0] or 0
+        # витрати
+        c.execute("SELECT SUM(amount) FROM expenses WHERE day=?", (day,))
+        expenses = c.fetchone()[0] or 0
 
-    await update.message.reply_text(
-        f"📊 Статус\n"
-        f"🔥 {total_cal} / {GOAL_CALORIES} ккал\n"
-        f"💧 {glasses} / {GOAL_WATER_GLASSES} скл\n"
-        f"💸 {expenses:.2f} zł"
-    )
-    return
+        await update.message.reply_text(
+            f"📊 Статус\n"
+            f"🔥 {total_cal} / {GOAL_CALORIES} ккал\n"
+            f"💧 {glasses} / {GOAL_WATER_GLASSES} скл\n"
+            f"💸 {expenses:.2f} zł"
+        )
+        return
 
 
 
