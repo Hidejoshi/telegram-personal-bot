@@ -2,6 +2,9 @@ import os
 import sqlite3
 from datetime import datetime, timedelta
 import pytz
+from flask import Flask
+import threading
+
 
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, filters, CommandHandler
@@ -443,6 +446,19 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await update.message.reply_text("\n".join(msg))
         return
+
+
+def keep_alive():
+    app_flask = Flask(__name__)
+
+    @app_flask.route("/")
+    def home():
+        return "OK"
+
+    port = int(os.environ.get("PORT", 10000))
+    app_flask.run(host="0.0.0.0", port=port)
+
+threading.Thread(target=keep_alive, daemon=True).start()
 
 # ================== RUN ==================
 
